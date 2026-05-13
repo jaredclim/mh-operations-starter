@@ -1,5 +1,84 @@
-import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+import { fetchArchive, fetchOpportunities } from "@/lib/sheets";
+import { bucketize } from "@/lib/bucketing";
+import { PipelineCockpit } from "@/components/PipelineCockpit";
+import { RefreshButton } from "@/components/RefreshButton";
+import { Nav } from "@/components/Nav";
+import { OverflowMenu } from "@/components/OverflowMenu";
 
-export default function Home() {
-  redirect("/opportunities");
+export const metadata: Metadata = { title: "Pipeline" };
+export const revalidate = 300; // 5 min ISR
+
+async function getDashboardData() {
+  try {
+    const [opps, archive] = await Promise.all([fetchOpportunities(), fetchArchive()]);
+    return { data: bucketize(opps, archive), error: null as string | null };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Unknown error fetching sheet data.";
+    return { data: null, error: msg };
+  }
+}
+
+function formatGeneratedAt(iso: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Vancouver",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(iso));
+}
+
+export default async function PipelinePage() {
+  const { data, error } = await getDashboardData();
+
+  return (
+    <main className="min-h-screen bg-bg">
+      <header className="bg-cc-navy text-white border-b border-cc-navy-deep sticky top-0 z-30">
+        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="h-10 px-2 rounded-lg bg-white/95 flex items-center justify-center shadow-md">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/cc-logo.png"
+                alt="Colour Craft"
+                className="h-7 w-auto object-contain"
+              />
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.25em] text-cc-accent/90 font-semibold">
+                Colour Craft
+              </div>
+              <h1 className="text-lg sm:text-xl font-bold leading-tight">Pipeline</h1>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <Nav />
+            {data && (
+              <div className="hidden lg:block text-right text-xs text-white/60">
+                <div>Updated</div>
+                <div className="font-medium text-white">{formatGeneratedAt(data.generatedAt)}</div>
+              </div>
+            )}
+            <RefreshButton />
+            <OverflowMenu />
+            <kbd className="hidden md:inline-flex items-center gap-1 px-2 py-1 text-[11px] bg-white/10 rounded border border-white/20 text-white/80">
+              <span>⌘</span>K
+            </kbd>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-5 sm:py-6">
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-cc-danger">
+            <div className="font-semibold mb-1">Couldn&apos;t load pipeline data</div>
+            <div className="text-text-secondary">{error}</div>
+          </div>
+        )}
+        {data && <PipelineCockpit data={data} />}
+      </div>
+    </main>
+  );
 }

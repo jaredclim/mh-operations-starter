@@ -1,37 +1,58 @@
 import type { Metadata } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { SwRegister } from "@/components/SwRegister";
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
 
 export const metadata: Metadata = {
-  title: { template: "%s | Mahogany & Hyde", default: "Mahogany & Hyde Operations" },
-  description: "Sales pipeline + production schedule for Mahogany and Hyde",
+  title: {
+    template: "%s | Colour Craft",
+    default: "Colour Craft",
+  },
+  description: "Colour Craft Painting — production schedule + sales pipeline",
+  // PWA meta — iOS Safari needs these to show "Add to Home Screen" with
+  // the right icon, name, and standalone display. Android picks these up
+  // from the manifest.webmanifest automatically.
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "Colour Craft",
+    statusBarStyle: "default",
+  },
+  icons: {
+    icon: [
+      { url: "/icons/cc-icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/cc-icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180" }],
+  },
 };
 
 export const viewport = {
-  themeColor: "#3a2618",
+  themeColor: "#0F2D4A",
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className="h-full antialiased">
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full">
-        <Nav />
+        <SwRegister />
         {children}
       </body>
     </html>
-  );
-}
-
-function Nav() {
-  return (
-    <nav className="border-b border-border bg-surface px-6 py-3 flex items-center gap-6">
-      <span className="font-bold tracking-tight text-mh-walnut">Mahogany &amp; Hyde</span>
-      <a href="/opportunities" className="text-sm text-text-secondary hover:text-mh-mahogany">Opportunities</a>
-      <a href="/production" className="text-sm text-text-secondary hover:text-mh-mahogany">Production</a>
-      <a href="/clock" className="text-sm text-text-secondary hover:text-mh-mahogany">Clock</a>
-      <a href="/focus" className="text-sm text-text-secondary hover:text-mh-mahogany">Focus</a>
-    </nav>
   );
 }

@@ -1,125 +1,42 @@
 # Mahogany & Hyde Operations — Starter
 
-A sanitized clone of the sales pipeline + production schedule system that Jared Lim built for Colour Craft Painting, adapted for Mahogany and Hyde (custom woodworking, Arkansas).
+The exact working code of Jared Lim's Colour Craft Painting operations dashboard, copied verbatim, ready for Cody O'Neal's Claude Code to adapt for Mahogany and Hyde (custom woodworking, Arkansas).
 
-**Live demo of the structure:** `/opportunities`, `/production`, `/clock`, `/focus`.
+**You don't run this manually. Cody's Claude Code does the cloning, adapting, and deploying.** This README exists only so Claude Code knows what's inside.
 
-## What this gives you
+## Inside
 
-- **The architecture that works.** Service-account Google Sheets reads. JWT cookie auth. Next.js 16 + Tailwind 4 + React 19 Server Components + ISR. All the working patterns from Jared's CC dashboard, with paint-specific business logic stripped out.
-- **Generic stages and schemas you'll customize.** `lib/types.ts` defines a woodwork-tailored Opportunity stage list and a ProductionJob shape with `woodSpecies` + `finishType` already wired in.
-- **A `CLAUDE.md` packed with hard-won learnings** so your Claude Code doesn't have to re-discover them.
-- **TODOs marked `TODO (CODY):`** at every spot that needs your input. Tell Claude Code to walk through them one at a time.
+- **Next.js 16 + Tailwind 4 + React 19 Server Components** dashboard with ISR
+- **Service-account Google Sheets** read pattern (no OAuth expiry pain)
+- **JWT cookie auth** with single shared password, 30-day session
+- **`/opportunities`** — bucketed sales pipeline (overdue / today / next 7 / 14 / 30 / 90 / unscheduled) with pinned Verbal Yes rail
+- **`/production`** — drag-to-resize Gantt-style schedule with crew/job cards (crews removed for MH adaptation)
+- **`/focus`** — one-card-at-a-time Focus Mode with AI prioritization, no-same-day-requeue rule
+- **`/leads`** — pre-quote board (removed for MH — pre-quote outreach lives inside Opportunities)
+- 40+ working components, hard-won UX fixes baked in
 
-## Quick start
+## How Claude Code uses this
 
-```bash
-# 1. Clone and install
-git clone https://github.com/jaredclim/mh-operations-starter.git mh-operations
-cd mh-operations
-npm install
+Read `CLAUDE.md`. That file is the adaptation playbook: which files to keep, which to delete, which strings to rename, which CSS variables to swap. Phase 0 (steps 0.1 through 0.7) walks through the full CC → MH transformation. After Phase 0, the rest of the build sequence follows the prompts in the guide page Jared shared with Cody.
 
-# 2. Set up environment
-cp .env.example .env.local
-# Fill in: GOOGLE_SHEET_ID, GOOGLE_SERVICE_ACCOUNT_KEY, DASHBOARD_PASSWORD, AUTH_SECRET
+## Setup is done by Claude Code
 
-# 3. Run locally
-npm run dev
-# Open http://localhost:3000
+- `git clone` this repo, run `npm install`
+- Create the Mahogany and Hyde Operations Google Sheet via workspace-mcp (three tabs: Opportunities / Production / TimeEntries — schema in `CLAUDE.md` Step 0.4)
+- Set up service account access
+- Fill `.env.local` (GOOGLE_SHEET_ID, GOOGLE_SERVICE_ACCOUNT_KEY, DASHBOARD_PASSWORD, AUTH_SECRET)
+- Deploy to Vercel Hobby tier
 
-# 4. Deploy to Vercel (Hobby tier — free)
-vercel link
-vercel --prod
-```
+## Stack
 
-## Setup walkthrough
-
-### Step 1 — Create the Google Sheet
-
-In your Google Drive create a sheet called **Mahogany and Hyde Operations** with three tabs:
-
-**Tab: `Opportunities`** &mdash; columns A through L
-
-| Col | Field | Example |
-|---|---|---|
-| A | id | OPP001 |
-| B | name | Sarah Chen (Designer) |
-| C | stage | Initial Contact / Phone Conversation / Quote Sent / Verbal Yes / Booked / Lost / On Hold |
-| D | estValue | 5800 |
-| E | bookedValue | 0 |
-| F | source | designer / cold / past-client / referral |
-| G | lastTouchDate | 2026-05-12 |
-| H | nextFollowUpDate | 2026-05-19 |
-| I | nextFollowUpType | call / email / text / IG-comment |
-| J | notes | Free text |
-| K | designerName | Sarah Chen |
-| L | isTestRow | leave blank, or "TEST" to hide |
-
-**Tab: `Production`** &mdash; columns A through L
-
-| Col | Field |
-|---|---|
-| A | id |
-| B | name |
-| C | bookedValue |
-| D | materialsBudget |
-| E | quotedHours |
-| F | startDate |
-| G | targetShipDate |
-| H | status (Scheduled / In Production / Complete) |
-| I | woodSpecies |
-| J | finishType |
-| K | notes |
-| L | isTestRow |
-
-**Tab: `TimeEntries`** &mdash; leave blank for now. The /clock page will write here in Phase 3.
-
-### Step 2 — Get a Google Service Account key
-
-Tell Claude Code:
-
-> Walk me through creating a Google Cloud service account with read access to the Sheets API and granting it access to my Mahogany and Hyde Operations sheet. Then take the downloaded JSON key, collapse it to a single line, and paste it into .env.local as GOOGLE_SERVICE_ACCOUNT_KEY.
-
-This is a one-time setup. The key never expires.
-
-### Step 3 — Set the dashboard password
-
-In `.env.local`:
-
-```
-DASHBOARD_PASSWORD=<something you and Paul will remember>
-AUTH_SECRET=<generate with: openssl rand -hex 32>
-GOOGLE_SHEET_ID=<from your sheet URL>
-```
-
-### Step 4 — Deploy to Vercel (Hobby tier, free)
-
-```bash
-vercel link        # link this folder to a new Vercel project
-vercel             # preview deploy
-vercel --prod      # production deploy
-```
-
-After deploy, set the same four env vars in the Vercel dashboard (Settings → Environment Variables). Hobby tier is free and fully sufficient for your use case.
-
-## Architecture in one paragraph
-
-The Google Sheet is the database. The Next.js app is a beautiful, AI-augmented view on top of it. Pages re-fetch the sheet every 5 minutes (ISR). Edits to the sheet show up in the app within 5 minutes. The app does not write back to the sheet in V1 — that lands in Phase 2 when you add quick-log buttons. The /clock page (Phase 3) writes time entries to a separate Postgres database (Neon free tier) because writes-per-minute would otherwise blow through the Google Sheets API quota.
-
-## What's intentionally missing
-
-This is V1. The following are NOT in the starter — they're TODOs for Cody to drive with Claude Code:
-
-- AI summarization of Fathom transcripts per designer
-- Server Actions to log a touch from Focus Mode back into the sheet
-- Gantt timeline view on `/production`
-- Todoist MCP integration on `/clock`
-- Postgres `time_entries` table + the auto-stop-previous-timer transaction
-- Morning briefing email
-- Job-cost rollup pulling QB materials + Postgres labour hours
-
-The `CLAUDE.md` in this repo documents exactly what to do next and why.
+- Next.js 16 (App Router, Turbopack)
+- React 19 Server Components + ISR (`revalidate: 300`)
+- Tailwind 4 with `@theme inline` color tokens in `app/globals.css`
+- Google Sheets API (read-only) via service account JWT
+- `jose` for JWT cookie auth
+- `framer-motion`, `lucide-react`, `recharts`, `date-fns`, `tailwind-merge`, `clsx`
+- Deployed on Vercel Hobby
 
 ## Credits
 
-Architecture by Jared Lim. Sanitized starter prepared for Cody O'Neal of Mahogany and Hyde, May 2026.
+Architecture by Jared Lim. Adaptation playbook for Cody O'Neal of Mahogany and Hyde, May 2026.

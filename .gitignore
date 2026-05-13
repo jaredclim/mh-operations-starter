@@ -4,3 +4,7 @@ node_modules/
 .vercel
 *.log
 .DS_Store
+
+scripts-*.mjs
+opp-*.json
+.env.vercel-prod

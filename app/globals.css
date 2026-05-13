@@ -1,53 +1,62 @@
 @import "tailwindcss";
 
 :root {
-  /* Mahogany & Hyde brand palette — walnut + cream + brass */
-  --mh-walnut: #3a2618;
-  --mh-walnut-deep: #271710;
-  --mh-mahogany: #6e3a1f;
-  --mh-brass: #b8893a;
-  --mh-brass-soft: #f4e6c6;
-  --mh-cream: #f8f3e8;
-  --mh-cream-soft: #f1ead8;
+  /* Colour Craft brand */
+  --cc-navy: #0F2D4A;
+  --cc-navy-deep: #08213A;
+  --cc-blue: #1E5C8A;
+  --cc-accent: #E8923C;
+  --cc-accent-soft: #FCEBD5;
+  --cc-success: #2F8C3D;
+  --cc-warning: #D97706;
+  --cc-danger: #C0392B;
+  --cc-info: #2563EB;
 
-  --bg: #f8f3e8;
-  --surface: #ffffff;
-  --border: #e6dcc4;
-  --border-strong: #d4c69e;
+  /* Surfaces — warm-paper bg with white cards. Reads as "primed canvas"
+     rather than cool corporate SaaS grey, which matches the CC brand
+     (painting company, warm navy + orange palette). Cards stay pure
+     white so contrast + scannability stay maximal — only the bg shifts
+     temperature. Borders warmed by a hair so they don't read cool-grey
+     against the new bg. */
+  --bg: #F8F5EE;
+  --surface: #FFFFFF;
+  --surface-elev: #FFFFFF;
+  --border: #E8E4D9;
+  --border-strong: #D6D1C2;
 
-  --text-primary: #1a1108;
-  --text-secondary: #5a4a37;
-  --text-muted: #8a7a62;
+  /* Text */
+  --text-primary: #0B1726;
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
 
-  --success: #2f6f2e;
-  --warning: #b8893a;
-  --danger: #a83a1f;
-  --info: #3a5577;
-
-  --bucket-overdue: #a83a1f;
-  --bucket-today: #c25a1f;
-  --bucket-7: #b8893a;
-  --bucket-14: #3a5577;
-  --bucket-30: #2f6f2e;
-  --bucket-90: #6a5a48;
-  --bucket-unsched: #5a4a37;
+  /* Bucket accents */
+  --bucket-overdue: #DC2626;
+  --bucket-today: #EA580C;
+  --bucket-7: #CA8A04;
+  --bucket-14: #2563EB;
+  --bucket-30: #16A34A;
+  --bucket-90: #64748B;
+  --bucket-unsched: #475569;
 }
 
 @theme inline {
   --color-bg: var(--bg);
   --color-surface: var(--surface);
+  --color-surface-elev: var(--surface-elev);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-text-primary: var(--text-primary);
   --color-text-secondary: var(--text-secondary);
   --color-text-muted: var(--text-muted);
-  --color-mh-walnut: var(--mh-walnut);
-  --color-mh-walnut-deep: var(--mh-walnut-deep);
-  --color-mh-mahogany: var(--mh-mahogany);
-  --color-mh-brass: var(--mh-brass);
-  --color-mh-brass-soft: var(--mh-brass-soft);
-  --color-mh-cream: var(--mh-cream);
-  --color-mh-cream-soft: var(--mh-cream-soft);
+  --color-cc-navy: var(--cc-navy);
+  --color-cc-navy-deep: var(--cc-navy-deep);
+  --color-cc-blue: var(--cc-blue);
+  --color-cc-accent: var(--cc-accent);
+  --color-cc-accent-soft: var(--cc-accent-soft);
+  --color-cc-success: var(--cc-success);
+  --color-cc-warning: var(--cc-warning);
+  --color-cc-danger: var(--cc-danger);
+  --color-cc-info: var(--cc-info);
   --color-bucket-overdue: var(--bucket-overdue);
   --color-bucket-today: var(--bucket-today);
   --color-bucket-7: var(--bucket-7);
@@ -55,11 +64,110 @@
   --color-bucket-30: var(--bucket-30);
   --color-bucket-90: var(--bucket-90);
   --color-bucket-unsched: var(--bucket-unsched);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
 }
 
 html, body {
   background: var(--bg);
   color: var(--text-primary);
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  font-feature-settings: "cv11", "ss01", "ss03";
 }
-body { min-height: 100vh; }
+
+body {
+  min-height: 100vh;
+}
+
+/* Scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+/* Smoother focus rings */
+:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: 2px;
+}
+
+/* Skeleton shimmer — applied to .skeleton elements. The gradient sweeps
+   left-to-right and creates a subtle reflective sheen across each block.
+   Base color is zinc-200; shimmer is white-ish. Designed to feel premium
+   (slow, smooth) without being distracting. */
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(232, 225, 211, 1) 0%,
+    rgba(243, 238, 228, 1) 40%,
+    rgba(255, 253, 248, 1) 50%,
+    rgba(243, 238, 228, 1) 60%,
+    rgba(232, 225, 211, 1) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+  border-radius: 0.375rem;
+}
+
+.skeleton-dark {
+  background: linear-gradient(
+    90deg,
+    rgba(20, 50, 80, 0.55) 0%,
+    rgba(40, 80, 120, 0.55) 40%,
+    rgba(60, 100, 140, 0.55) 50%,
+    rgba(40, 80, 120, 0.55) 60%,
+    rgba(20, 50, 80, 0.55) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+  border-radius: 0.375rem;
+}
+
+/* Sticky header offsets */
+@media (max-width: 640px) {
+  .sticky { backdrop-filter: blur(8px); }
+}
+
+/* Card elevation — two-layer brand-tinted shadow. Tints toward the
+   CC navy so shadows feel like the brand color casting onto the
+   surface, not generic neutral grey. This is the premium-SaaS lift
+   pattern (Stripe Dashboard, Linear, Attio) — elevation via shadow,
+   not background contrast. Used on the production job cards' default
+   state so cards visibly float off the white grid cells. */
+.elev-card {
+  box-shadow:
+    0 1px 2px rgba(15, 45, 74, 0.06),
+    0 2px 6px -2px rgba(15, 45, 74, 0.08);
+}
+.elev-card:hover {
+  box-shadow:
+    0 2px 4px rgba(15, 45, 74, 0.08),
+    0 8px 22px -8px rgba(15, 45, 74, 0.18);
+}
+
+/* Focus Mode WHAT-TO-KNOW context scroll — thin brand-accent scrollbar
+   on the dark card so long summaries (4+ bullets, full sentences) can
+   scroll inside the card without breaking layout. */
+.focus-context-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.focus-context-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 3px;
+}
+.focus-context-scroll::-webkit-scrollbar-thumb {
+  background: rgba(241, 158, 61, 0.35);
+  border-radius: 3px;
+}
+.focus-context-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(241, 158, 61, 0.55);
+}
+.focus-context-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(241, 158, 61, 0.35) rgba(255, 255, 255, 0.04);
+}

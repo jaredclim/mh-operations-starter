@@ -1,101 +1,154 @@
 # Mahogany & Hyde Operations — project notes for Claude Code
 
-## What this is
+## What this repo is
 
-The starter for Cody O'Neal's internal operations dashboard at Mahogany and Hyde, custom woodworking shop in Arkansas. Built from a sanitized clone of Jared Lim's Colour Craft sales + production system. Three surfaces in one Next.js app:
+**This is the EXACT working code of Jared Lim's Colour Craft Painting operations dashboard**, copied verbatim. Same components, same UI, same patterns, same hard-won fixes. Not a sanitized skeleton — the real thing.
 
-- `/opportunities` — sales pipeline, bucketed by next-follow-up date, with a pinned Verbal Yes rail on top
-- `/production` — booked commissions in build
-- `/clock` — phone-first clock-in/out for Cody and Paul (per-task time entries)
-- `/focus` — one-card-at-a-time focus mode for outbound sales sessions
+Your job is to **adapt** it for Cody O'Neal's Mahogany and Hyde (custom woodworking, Arkansas). The visual design, component architecture, focus mode logic, bucketing logic, JWT auth, service-account Sheets pattern, ISR strategy — all of that stays exactly the same. What changes:
+
+1. **Brand tokens** — CC navy/orange becomes MH walnut/mahogany/brass
+2. **Business vocabulary** — "painting" / "crews" / "washing" / "colours" becomes "woodworking" / "Paul" (single producer) / "milling" / "finishing"
+3. **CC-specific features Cody doesn't need** — subcontractor iCal feeds, weather widget, DripJobs CSV import, crew management, ProductionMap
+4. **Sheet schema** — CC's 29-column Lead Tracker becomes MH's simpler Opportunity / Production / TimeEntries schema
+5. **NEW features Cody needs** — phone-first `/clock` surface for per-task time entries (Paul clocks in/out by task)
+
+## The adaptation playbook (Phase 0 — do this before anything else)
+
+Run these in order as the **very first thing** after cloning the repo. Each step is a discrete pass; confirm in dev (`npm run dev` → load page → looks right) before moving to the next.
+
+### Step 0.1 — Bulk rename CC → MH (visible strings)
+
+- `app/layout.tsx`: change metadata title/description from Colour Craft to Mahogany & Hyde
+- `app/manifest.ts`: change name + short_name
+- `app/login/LoginForm.tsx`: replace the `<img src="/cc-logo.png" />` block with a text wordmark "Mahogany & Hyde" (no logo file ships with the starter). The "Colour Craft Painting" tagline becomes "Custom Woodworking".
+- `app/page.tsx`: any "Colour Craft" copy in the dashboard header becomes "Mahogany & Hyde"
+- Search-replace any visible "Colour Craft" / "CC" string in `app/**/*.tsx` and `components/**/*.tsx` to the MH equivalent
+- Keep the `cc-` prefix in CSS variable names for now (Step 0.2 handles those) — only fix VISIBLE strings here
+
+### Step 0.2 — Rebrand the design tokens
+
+In `app/globals.css`, the `:root` block has CC color tokens. Replace the palette, keeping the same variable shape:
+
+```css
+/* Old CC palette */
+--cc-navy: #0F2D4A; --cc-blue: #1E5C8A; --cc-accent: #E8923C; ...
+
+/* New MH palette — walnut + cream + brass */
+--mh-walnut: #3a2618; --mh-walnut-deep: #271710;
+--mh-mahogany: #6e3a1f; --mh-brass: #b8893a;
+--mh-brass-soft: #f4e6c6; --mh-cream: #f8f3e8;
+```
+
+Update the `@theme inline` block in lockstep: every `--color-cc-*` becomes `--color-mh-*`. Then search-replace `cc-navy` → `mh-walnut`, `cc-blue` → `mh-walnut-deep`, `cc-accent` → `mh-mahogany`, `cc-accent-soft` → `mh-brass-soft` across all `.tsx` files. The bg color `#F8F5EE` (CC's warm paper) can stay or shift slightly cooler — try `#f8f3e8`.
+
+Bucket accent colors (overdue/today/7/14/30/90/unsched) and bucket logic stay identical — they work for any sales pipeline.
+
+### Step 0.3 — Remove CC-specific features Cody doesn't need
+
+Delete:
+- `app/api/ical/` — subcontractor iCal feeds (Cody has no subs)
+- `components/ProductionMap.tsx` + `ProductionMapClient.tsx` + `lib/geocode.ts` — no service area to map
+- `lib/weather.ts` — woodwork doesn't depend on weather
+- `lib/csvParse.ts` + DripJobs-related logic in `lib/leadActions.ts` — Cody uses Todoist + QB Time, not DripJobs
+- Any "crew" UI (`AddJobModal.tsx` crew selector, Crew enum in `lib/types.ts`, crews API) — Cody's production is solo with Paul
+- `app/api/lead`, `app/leads/`, `components/LeadCard*.tsx`, `LeadDrawer*.tsx`, `LeadBulkImportModal.tsx`, `LeadAddModal.tsx`, `LeadQuickLog.tsx`, `LeadTopPicks.tsx`, `LeadsCockpit.tsx`, `LeadsHeadlinePanel.tsx`, `LeadsHealthCard.tsx`, `LeadsInitNotice.tsx` — Cody's pre-quote outreach lives inside Opportunities as the "Initial Contact" stage; no separate Leads board
+- The Leads link in `components/Nav.tsx`
+
+Keep (these are gold):
+- `/focus` (the killer feature)
+- `app/production/page.tsx` core timeline + job cards (strip the crew/washing/colors UI; add wood species/finish fields)
+- `components/OppCard.tsx`, `OppDrawer.tsx`, `BucketSection.tsx`, `VerbalYesRail.tsx`, `StageBadge.tsx`, `DateGroupSection.tsx`, `HeatGroupSection.tsx`, `FocusModeView.tsx`, `HeadlinePanel.tsx`, `SmartInsightsPanel.tsx`, `CommandPalette.tsx`, `Sparkline.tsx`
+- `lib/bucketing.ts`, `lib/heat.ts`, `lib/insights.ts`, `lib/focusQueue.ts`, `lib/salesCadence.ts` — the prioritization brain
+- `lib/sheets.ts` — the service-account read pattern (you'll rewrite the column parsers in Step 0.4)
+- `lib/auth.ts`, `proxy.ts`, `app/login/`, `app/api/auth/` — auth layer unchanged
+- All of `app/globals.css` structure (just swap palette)
+
+### Step 0.4 — Adapt the sheet schema
+
+CC's Lead Tracker is 29 columns. MH's much simpler:
+
+**Opportunities tab (A-L):** id, name, stage, estValue, bookedValue, source, lastTouchDate, nextFollowUpDate, nextFollowUpType, notes, designerName, isTestRow
+
+**Production tab (A-L):** id, name, bookedValue, materialsBudget, quotedHours, startDate, targetShipDate, status, woodSpecies, finishType, notes, isTestRow
+
+**TimeEntries tab:** empty for now; Phase 3 (Postgres time_entries) populates this.
+
+Rewrite `lib/sheets.ts` parsers for these column letters. Update `lib/types.ts` Opportunity + ProductionJob interfaces.
+
+### Step 0.5 — Adapt the stage list
+
+CC uses: Proposal Sent / Verbal Yes / On Hold / Long-Term / Won / Lost / Archived
+
+MH uses: Initial Contact / Phone Conversation / Quote Sent / Verbal Yes / Booked / Lost / On Hold
+
+Update `VALID_STAGES` in `lib/sheets.ts`, `ACTIVE_STAGES` / `TERMINAL_STAGES` in `lib/bucketing.ts`, the Stage enum in `lib/types.ts`, and any hardcoded stage strings in `components/StageBadge.tsx`.
+
+### Step 0.6 — Add the new /clock surface
+
+This is brand new — CC doesn't have it. Create `app/clock/page.tsx` for phone-first task time tracking. See Phase 3 below for the full spec; build the scaffold now (so the page exists in nav) and wire it fully in Prompt 3.
+
+### Step 0.7 — Confirm everything renders
+
+`npm run dev`, open localhost, login. Confirm `/opportunities`, `/production`, `/focus`, `/clock` all render with MH branding and the right stages. Fix anything broken before deploying.
+
+---
 
 ## Stack and conventions
 
-- **Next.js 16 (App Router, Turbopack)** — note: middleware is renamed to `proxy.ts` and exports `proxy()` not `middleware()`. Don't revert.
+- **Next.js 16 (App Router, Turbopack)** — middleware is renamed to `proxy.ts` and exports `proxy()` not `middleware()`. Don't revert.
 - **React 19 Server Components**, ISR with `revalidate: 300` on the main pages
-- **Tailwind 4** with `@theme inline` block in `app/globals.css` (no separate `tailwind.config.ts`)
+- **Tailwind 4** with `@theme inline` block in `app/globals.css` (no `tailwind.config.ts`)
 - **TypeScript** strict mode
-- **Service account** for Google Sheets read access — NOT OAuth. OAuth refresh tokens expire every 7 days when a Google Cloud project is in testing mode; service accounts don't have that problem.
-- **JWT cookie** for auth via `jose`. Single shared password for Cody and Paul. 30-day session.
-- **No database in V1**. Time entries (the only high-write surface) get added on Neon Postgres in Phase 3 — see `app/clock/page.tsx` TODOs.
+- **Service account** for Google Sheets — NOT OAuth. OAuth refresh tokens expire every 7 days in Google Cloud testing mode; service accounts don't have that problem.
+- **JWT cookie** auth via `jose`. Single shared password. 30-day session.
 
-## File layout
+## Hard-won learnings (read these — they save days)
+
+1. **Never use `.toISOString().slice(0,10)` for "today".** It returns the UTC date, which is wrong overnight. Use `todayISO()` in `lib/utils.ts` which uses `Intl.DateTimeFormat` with an explicit timezone. Starter is hardcoded to `America/Vancouver` — change to `America/Chicago` for Arkansas.
+
+2. **The sheet is the source of truth, the app is a view.** Never store data in the app that isn't also in the sheet.
+
+3. **ISR revalidate = 300 seconds.** Sheet edits show in the app within 5 minutes. Don't "fix" this with constant re-fetches; you'll hit the Sheets API quota.
+
+4. **Verify before declaring done.** Run `npm run build` after any change. Grep for any Tailwind class you used to confirm it appears as a literal — Tailwind v4 purges dynamic-string classes.
+
+5. **One feature at a time, used a week before the next.** Parallel feature builds get abandoned.
+
+6. **Focus Mode rule that must never break:** anyone touched today is EXCLUDED from the queue. `buildFocusQueue` filters by `lastTouchDate !== today`. Do not requeue same-day.
+
+7. **Verbal Yes rail is pinned, always visible.** Don't bury it in the bucket list.
+
+8. **Mobile-first for `/clock`, desktop-first for everything else.** Paul lives on `/clock` from his phone.
+
+9. **Tailwind v4 theme tokens.** Add a `--mh-foo` var in `:root` AND mirror as `--color-mh-foo` in `@theme inline`, then use `bg-mh-foo` / `text-mh-foo` as literal class strings (not template strings).
+
+10. **Plan before non-trivial work.** Enter planning mode, show plan, get approval, then execute.
+
+## Phase 3 — /clock spec (when you get there)
+
+Phone-first surface. Schema for the Postgres `time_entries` table (Neon free tier):
 
 ```
-app/
-  page.tsx                  redirects to /opportunities
-  layout.tsx                root layout + top nav
-  globals.css               Tailwind + M&H brand tokens
-  opportunities/page.tsx    sales pipeline
-  production/page.tsx       commissions in build
-  clock/page.tsx            phone-first clock-in (scaffolded)
-  focus/page.tsx            one-card-at-a-time focus mode
-  login/page.tsx            Suspense wrapper
-  login/LoginForm.tsx       password form
-  api/auth/route.ts         POST = login, DELETE = logout
-lib/
-  types.ts                  Opportunity, ProductionJob, TimeEntry, stages
-  utils.ts                  cn, currency, date helpers, todayISO
-  sheets.ts                 Google Sheets API client
-  bucketing.ts              active filter + date-based buckets
-  focusQueue.ts             prioritization for /focus
-  auth.ts                   JWT helpers
-proxy.ts                    Next.js 16 proxy (was middleware) — auth gate
+id           serial primary key
+user         text not null  -- "Cody" or "Paul"
+job_id       text not null  -- FK to ProductionJob.id
+task         text not null  -- milling / glue-up / sanding / finishing / assembly / install
+started_at   timestamptz not null default now()
+ended_at     timestamptz null  -- null while running
+units        numeric null
+unit_type    text null  -- "linear-ft" / "sq-ft" / "pieces"
 ```
 
-## Data layer notes
+When Paul picks a different task while one is running, auto-stop the previous (set ended_at = now()) BEFORE inserting the new row. Wrap in a transaction. Concurrent clock-ins would double-count.
 
-- Sheet ID set via `GOOGLE_SHEET_ID` env var. No fallback — set this in `.env.local`.
-- Three tabs: `Opportunities`, `Production`, `TimeEntries` (TimeEntries column reads added in Phase 3).
-- Column mappings are documented at the top of each `fetch*` function in `lib/sheets.ts`. If you reorder columns in the sheet, update the parsers there.
-- Test rows (column L = "TEST") are filtered at parse time.
-- Terminal stages (`Booked`, `Lost`) excluded from the active opportunity board by `bucketize`.
+Job dropdown pulls from Todoist MCP (Todoist projects = jobs). Task dropdown from a hardcoded list (Cody confirms his standard task categories during Prompt 1).
 
-## Auth notes
+## Phase 4 — the glue (after Phase 3)
 
-- One shared password set via `DASHBOARD_PASSWORD` env var
-- `proxy.ts` intercepts all routes except `/login`, `/api/auth`, and `_next/*`
-- JWT secret in `AUTH_SECRET` env var (32+ random chars — generate with `openssl rand -hex 32`)
-- Cookie is HttpOnly, Secure in prod, SameSite=Lax, 30-day max age
-
-## Hard-won learnings from Jared (read these before coding)
-
-1. **Never use `.toISOString().slice(0,10)` for "today's date".** It returns the UTC date, which is wrong overnight. Always go through `todayISO()` in `lib/utils.ts` which uses `Intl.DateTimeFormat` with an explicit timezone.
-
-2. **The sheet is the source of truth, the app is a view.** Never store data in the app that isn't also in the sheet. Cody and Paul need to be able to edit the sheet directly if anything ever breaks.
-
-3. **ISR revalidate = 300 seconds.** Sheet edits don't show up in the app instantly — there's a 5-minute lag. Don't try to optimize this away with constant re-fetches; you'll blow through the Google Sheets API quota.
-
-4. **Verify before declaring done.** After any code change, run `npm run build` and grep for any Tailwind class you used to confirm it appears as a literal (Tailwind v4 purges classes that don't appear as text). Test on mobile if anything goes on `/clock`.
-
-5. **One feature at a time, used for a week before the next.** Every time Jared tried to ship four features in parallel, two of them got abandoned half-built. Build, ship, use it for a real week, then move.
-
-6. **Focus Mode rule that must never break:** anyone touched today is EXCLUDED from the queue. `buildFocusQueue` filters `o.lastTouchDate !== today`. Do not surface someone again the same day even if they're high-priority.
-
-7. **The Verbal Yes rail is pinned, always visible.** Don't bury it inside the bucket list. It's the closest-to-revenue section and the whole reason the app exists.
-
-8. **Mobile-first for `/clock`, desktop-first for everything else.** Paul will live on `/clock` from his phone. Cody works the pipeline from a laptop.
-
-9. **Tailwind v4 trap.** No `tailwind.config.ts`. The `@theme inline` block in `app/globals.css` defines color tokens. To add a new color: add a `--mh-foo` var in `:root`, mirror it as `--color-mh-foo` inside `@theme inline`, then use it as `bg-mh-foo` / `text-mh-foo` in JSX. The class names must appear as literal strings, not template-strings-with-variables, or they'll get purged.
-
-10. **When extending, plan first.** Tell Claude Code to enter planning mode before any non-trivial change. Get the plan. Approve. Then let it execute. This saves multiple hours of re-work.
-
-## When extending
-
-- **New tab**: add `app/<name>/page.tsx` plus a nav link in `app/layout.tsx`. Auth + ISR carry over.
-- **New sheet column**: update the column letter map in `lib/sheets.ts` parsers AND the type in `lib/types.ts`.
-- **New stage**: add to `OPPORTUNITY_STAGES` in `lib/types.ts`. Decide if it's `ACTIVE` or `TERMINAL` in `lib/bucketing.ts`.
-- **New action button in Focus Mode**: add a Server Action that writes to the sheet's `lastTouchDate` + `notes` columns.
-
-## Open TODOs for Cody to drive with Claude Code
-
-Search the codebase for `TODO (CODY):` — every spot that needs Cody's input is tagged there.
-
-- `app/clock/page.tsx` — wire to Todoist MCP, hook up Postgres time_entries, build the auto-stop-previous-timer transaction
-- `app/production/page.tsx` — upgrade card grid to Gantt timeline
-- `app/focus/page.tsx` — add Server Actions for Called / Emailed / Texted / IG-comment / Skip
-- `app/opportunities/page.tsx` — add drawer / detail panel on card click
+- Morning briefing email at 7am Central
+- AI Estimate Generator at /estimate
+- Margin dashboard at /margins (per-commission rollup pulling QuickBooks expenses + Postgres labour hours)
 
 ## Commit style
 
-`<short imperative>` then optional body. End with the model attribution if you want, but it's optional.
+Short imperative subject. End with `Co-Authored-By:` line if you want.

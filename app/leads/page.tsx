@@ -1,0 +1,84 @@
+import type { Metadata } from "next";
+import { fetchLeads } from "@/lib/sheets";
+import { buildLeadsData } from "@/lib/leadsInsights";
+import { LeadsCockpit } from "@/components/LeadsCockpit";
+import { RefreshButton } from "@/components/RefreshButton";
+import { Nav } from "@/components/Nav";
+import { OverflowMenu } from "@/components/OverflowMenu";
+import { LeadsInitNotice } from "@/components/LeadsInitNotice";
+
+export const metadata: Metadata = { title: "Leads" };
+export const revalidate = 300;
+
+async function getData() {
+  try {
+    const leads = await fetchLeads();
+    return { data: buildLeadsData(leads), error: null as string | null };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Unknown error fetching Leads tab.";
+    return { data: null, error: msg };
+  }
+}
+
+function formatGeneratedAt(iso: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Vancouver",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(iso));
+}
+
+export default async function LeadsPage() {
+  const { data, error } = await getData();
+  const isEmpty = !!data && data.all.length === 0;
+
+  return (
+    <main className="min-h-screen bg-bg">
+      <header className="bg-cc-navy text-white border-b border-cc-navy-deep sticky top-0 z-30">
+        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="h-10 px-2 rounded-lg bg-white/95 flex items-center justify-center shadow-md">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/cc-logo.png"
+                alt="Colour Craft"
+                className="h-7 w-auto object-contain"
+              />
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.25em] text-cc-accent/90 font-semibold">
+                Colour Craft
+              </div>
+              <h1 className="text-lg sm:text-xl font-bold leading-tight">Leads</h1>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <Nav />
+            {data && (
+              <div className="hidden lg:block text-right text-xs text-white/60">
+                <div>Updated</div>
+                <div className="font-medium text-white">{formatGeneratedAt(data.generatedAt)}</div>
+              </div>
+            )}
+            <RefreshButton />
+            <OverflowMenu />
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-5 sm:py-6">
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-cc-danger">
+            <div className="font-semibold mb-1">Couldn&apos;t load leads</div>
+            <div className="text-text-secondary">{error}</div>
+          </div>
+        )}
+        {isEmpty && <LeadsInitNotice />}
+        {data && data.all.length > 0 && <LeadsCockpit data={data} />}
+      </div>
+    </main>
+  );
+}
