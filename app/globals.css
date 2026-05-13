@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+:root {
+  /* Mahogany & Hyde brand palette — walnut + cream + brass */
+  --mh-walnut: #3a2618;
+  --mh-walnut-deep: #271710;
+  --mh-mahogany: #6e3a1f;
+  --mh-brass: #b8893a;
+  --mh-brass-soft: #f4e6c6;
+  --mh-cream: #f8f3e8;
+  --mh-cream-soft: #f1ead8;
+
+  --bg: #f8f3e8;
+  --surface: #ffffff;
+  --border: #e6dcc4;
+  --border-strong: #d4c69e;
+
+  --text-primary: #1a1108;
+  --text-secondary: #5a4a37;
+  --text-muted: #8a7a62;
+
+  --success: #2f6f2e;
+  --warning: #b8893a;
+  --danger: #a83a1f;
+  --info: #3a5577;
+
+  --bucket-overdue: #a83a1f;
+  --bucket-today: #c25a1f;
+  --bucket-7: #b8893a;
+  --bucket-14: #3a5577;
+  --bucket-30: #2f6f2e;
+  --bucket-90: #6a5a48;
+  --bucket-unsched: #5a4a37;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-mh-walnut: var(--mh-walnut);
+  --color-mh-walnut-deep: var(--mh-walnut-deep);
+  --color-mh-mahogany: var(--mh-mahogany);
+  --color-mh-brass: var(--mh-brass);
+  --color-mh-brass-soft: var(--mh-brass-soft);
+  --color-mh-cream: var(--mh-cream);
+  --color-mh-cream-soft: var(--mh-cream-soft);
+  --color-bucket-overdue: var(--bucket-overdue);
+  --color-bucket-today: var(--bucket-today);
+  --color-bucket-7: var(--bucket-7);
+  --color-bucket-14: var(--bucket-14);
+  --color-bucket-30: var(--bucket-30);
+  --color-bucket-90: var(--bucket-90);
+  --color-bucket-unsched: var(--bucket-unsched);
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+body { min-height: 100vh; }
