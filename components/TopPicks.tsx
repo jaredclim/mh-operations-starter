@@ -58,7 +58,8 @@ export function TopPicks({ active }: Props) {
   const queue = buildFocusQueue(active, { today: todayISO(), scope: "today" });
   const ranked = queue.slice(0, 3);
 
-  if (ranked.length === 0) return null;
+  // Don't return null when queue is empty — still render the header so the
+  // Focus Mode button stays visible. Empty state shows a brief "all clear" message.
 
   // Same smart-adjust logic as OppCard.quickLog — log the touch, then
   // only adjust next-FU if the current one is out of healthy cadence
@@ -120,6 +121,9 @@ export function TopPicks({ active }: Props) {
           Focus mode
         </Link>
       </div>
+      {ranked.length === 0 ? (
+        <p className="text-sm text-white/50 italic">Queue clear — no urgent calls today.</p>
+      ) : (
       <ul className="space-y-1.5">
         {ranked.map((pick) => {
           const id = pick.opp.id || pick.opp.name;
@@ -197,6 +201,7 @@ export function TopPicks({ active }: Props) {
           );
         })}
       </ul>
+      )}
       {openOpp && (
         <OppDrawer opp={openOpp} open={true} onClose={() => setOpenOpp(null)} />
       )}

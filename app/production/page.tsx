@@ -6,7 +6,7 @@ import { Nav } from "@/components/Nav";
 import { RefreshButton } from "@/components/RefreshButton";
 import { OverflowMenu } from "@/components/OverflowMenu";
 
-export const metadata: Metadata = { title: "Production" };
+export const metadata: Metadata = { title: "In Production" };
 // NOTE: ConfirmationBanner shelved 2026-05-10 — CC doesn't promise dates
 // to clients until a few days before the job, so a 72hr-out "confirming
 // your painting" email is premature. Schema (AF Auto-Confirm + AG

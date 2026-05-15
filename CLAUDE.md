@@ -93,6 +93,39 @@ This is brand new — CC doesn't have it. Create `app/clock/page.tsx` for phone-
 
 ---
 
+---
+
+## What's new since the initial transfer (2026-05-15 sync)
+
+Jared's CC dashboard kept evolving after the May 13 transfer. The source files below were refreshed in this repo on 2026-05-15. None of these break the Phase 0 playbook — but a few touch sheet schema and routing logic, so adapt them with the rest of Phase 0.
+
+**Sheet schema additions (Phase 0.4 — fold in when adapting Cody's sheet):**
+- The "Production" tab is now called **"In Production"**. Add a NEW tab called **"Completed Jobs"** with the SAME column schema as In Production (A:AG, same headers). A job marked Complete in the dashboard now MOVES the row from In Production → Completed Jobs (not just an in-place status change).
+- The Archive tab now holds Lost + Cancelled deals only — Won deals never go there. Won deals route directly to In Production. (Adapt this to MH's domain: a booked woodworking project goes straight to In Production, a Lost quote goes to Archive.)
+
+**New routing rule in `lib/leadActions.ts::archiveLead`:**
+- `result === "Won"` → write a new In Production row, NO Archive row
+- `result === "Lost"` → write Archive row only
+- On new In Production rows, auto-populates:
+  - col J **Est Hours** = `round(bookedValue / 100)` (CC's rough $100/hr rate — Cody, change this to your $/hr rate or your shop's hours-per-dollar yardstick during Phase 0)
+  - col U **Last Client Touch** = today (the booking day counts as the most-recent touch)
+
+**Mark-Complete now MOVES rows:** `lib/productionActions.ts::updateStatus(jobId, "Complete")` reads the In Production row, appends to Completed Jobs, then clears the In Production row. Lets the production grid stay focused on active work.
+
+**Production grid improvements (no schema change — pure UX):**
+- Multiple unscheduled jobs stack vertically in the Unassigned column instead of rendering on top of each other (previous behaviour caused jobs to be hidden behind one another).
+- Unscheduled job cards size to their estimated duration: `daysToFit(estHours)` rows tall. A 100-hour job appears as a 4-day card; a 25-hour job as 1 day.
+- Drag-and-drop reliability fix: optimistic state now reconciles per-field against server data instead of blanket-clearing on every refresh. Fixes the ~10–20% rate of cards snapping back after drag (was a race condition between sheet write and Google Sheets read-after-write propagation).
+- The "+" add-job affordance on empty cells no longer renders over occupied cells.
+
+**TopPicks empty-state:** the "What to do next" panel now shows a "Queue clear" message when there are no urgent items, instead of disappearing entirely. Keeps the Focus Mode CTA always visible.
+
+**Production card labels shortened:** Wash/Colors select labels trimmed to fit the 220px card width (Match instead of Match Required, etc.). Add `shrink-0` on flex `<select>` elements to prevent browser-squeeze overflow.
+
+**Nav: Focus tab removed.** Focus Mode is reachable via the top-right CTA on the Pipeline page; doesn't need to be a top-level tab.
+
+---
+
 ## Stack and conventions
 
 - **Next.js 16 (App Router, Turbopack)** — middleware is renamed to `proxy.ts` and exports `proxy()` not `middleware()`. Don't revert.

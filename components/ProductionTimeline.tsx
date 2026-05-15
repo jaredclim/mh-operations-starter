@@ -104,6 +104,11 @@ export function ProductionTimeline({
   initialManualCrews = [],
   initialBlocks = {},
 }: Props) {
+  // Hoisted to top of component so the optimistic-clear retry effect (below)
+  // can use them. Other call sites previously redeclared these — that's now
+  // dead code but harmless until a future cleanup pass.
+  const topRouter = useRouter();
+  const [, topStartTransition] = useTransition();
   // Optimistic overrides for in-flight drag-and-drop (and future inline
   // edits like resize). Drag-drop applies the move locally on drop so the
   // card snaps to its new position instantly — the server roundtrip
@@ -114,11 +119,53 @@ export function ProductionTimeline({
   const [optimistic, setOptimistic] = useState<Map<string, Partial<ProductionJob>>>(new Map());
   const prevRawJobsRef = useRef(rawJobs);
   useEffect(() => {
-    if (prevRawJobsRef.current !== rawJobs) {
-      setOptimistic(new Map());
-      prevRawJobsRef.current = rawJobs;
-    }
+    if (prevRawJobsRef.current === rawJobs) return;
+    prevRawJobsRef.current = rawJobs;
+    // BUGFIX (Jared 2026-05-15) — drag snap-back at ~10-20% rate. Previously
+    // we cleared ALL optimistic state on any rawJobs change. But Google
+    // Sheets is eventually-consistent: router.refresh() can fire BEFORE
+    // the sheet propagates the new value, returning stale rawJobs.
+    // Clearing optimistic then makes the card snap back to its old spot.
+    // Fix: only clear an optimistic entry once the server's rawJobs row
+    // ACTUALLY reflects the optimistic update. Stale-read entries persist
+    // until the next refresh catches up.
+    setOptimistic((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Map(prev);
+      for (const [jobId, override] of prev) {
+        const serverJob = rawJobs.find((j) => j.jobId === jobId);
+        if (!serverJob) continue;
+        const matches =
+          (override.startDate === undefined || serverJob.startDate === override.startDate) &&
+          (override.endDate === undefined || serverJob.endDate === override.endDate) &&
+          (override.crew === undefined || (serverJob.crew || "") === ((override.crew as string | undefined) ?? "")) &&
+          (override.estHours === undefined || serverJob.estHours === override.estHours) &&
+          (override.status === undefined || serverJob.status === override.status);
+        if (matches) {
+          next.delete(jobId);
+        }
+      }
+      return next;
+    });
   }, [rawJobs]);
+
+  // Safety retry: if a router.refresh() returned stale data and the
+  // optimistic state still has entries, fire another refresh ~2s later
+  // to fetch the now-propagated sheet values. Only one retry per cycle.
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    if (optimistic.size === 0) return;
+    retryTimerRef.current = setTimeout(() => {
+      topStartTransition(() => topRouter.refresh());
+    }, 2000);
+    return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
+  }, [optimistic]);
   const jobs = useMemo(() => {
     if (optimistic.size === 0) return rawJobs;
     return rawJobs.map((j) => {
@@ -160,7 +207,7 @@ export function ProductionTimeline({
   // View span: how many calendar months to render starting from the
   // anchor month. "all" renders the full active year(s).
   type ViewSpan = "1mo" | "2mo" | "3mo" | "all";
-  const [viewSpan, setViewSpan] = useState<ViewSpan>("1mo");
+  const [viewSpan, setViewSpan] = useState<ViewSpan>("2mo");
   const showAll = viewSpan === "all";
   const monthsAhead = viewSpan === "1mo" ? 0 : viewSpan === "2mo" ? 1 : viewSpan === "3mo" ? 2 : 0;
   const [dayOffset, setDayOffset] = useState(() => {
@@ -709,18 +756,48 @@ export function ProductionTimeline({
     const todayKeyLocal = fmtISO(new Date());
     const todayRowIdx = dayIndex.get(todayKeyLocal) ?? 0;
 
+    // Track occupied (crewIdx, rowStart) cells so multiple unscheduled
+    // jobs don't stack on top of each other in the Unassigned column.
+    // Per Jared 2026-05-15 — first unscheduled job → today, next → next
+    // working day, etc. Working-day skipping happens automatically because
+    // the `days` array only contains working days.
+    const occupiedUnscheduled = new Set<string>();
+
     for (const job of jobs) {
-      // Unscheduled jobs (no startDate) land at today's row in the
-      // Unassigned column. This is what auto-fires when a lead is marked
-      // Won — the new job appears immediately for Jared to drag onto a
-      // crew/day.
+      // Unscheduled jobs (no startDate) land in their crew column (or
+      // Unassigned) starting at today's row. If today is occupied, bump
+      // to the next available working-day row below.
+      //
+      // Cards SIZE to their duration: dayCount = ceil(estHours / 25). So
+      // a 100-hour job spans 4 rows, an 80-hour job spans ~3. Lets Jared
+      // see at a glance how long each unscheduled job will take to schedule
+      // around. Per Jared 2026-05-15. The next unscheduled job stacks
+      // below the full span of the previous one.
       if (!job.startDate) {
         const crewIdx = crews.indexOf(job.crew || UNASSIGNED_LABEL);
         if (crewIdx === -1) continue;
+        const dayCount = Math.max(1, daysToFit(effectiveHours(job)));
+        let rowStart = todayRowIdx;
+        while (
+          rowStart < days.length &&
+          occupiedUnscheduled.has(`${crewIdx}::${rowStart}`)
+        ) {
+          rowStart++;
+        }
+        // If we ran off the bottom of the visible window, fall back to
+        // today's row (overlap is the lesser evil vs not rendering).
+        if (rowStart >= days.length) rowStart = todayRowIdx;
+        // Mark all rows the card will occupy so the next unscheduled job
+        // stacks BELOW the full span, not on top of any of these rows.
+        for (let r = rowStart; r < rowStart + dayCount && r < days.length; r++) {
+          occupiedUnscheduled.add(`${crewIdx}::${r}`);
+        }
+        // Clamp the visual span to what fits in the window.
+        const clampedSpan = Math.min(dayCount, days.length - rowStart);
         out.push({
           job,
-          rowStart: todayRowIdx,
-          rowSpan: 1,
+          rowStart,
+          rowSpan: Math.max(1, clampedSpan),
           crewIdx,
           isContinuation: false,
           isContinued: false,
@@ -752,6 +829,20 @@ export function ProductionTimeline({
     }
     return out;
   }, [jobs, dayIndex, crews]);
+
+  // Set of "crewKey::dayISO" strings for every day a job occupies.
+  // Used to hide the "+" add-job affordance on DropCells that already
+  // have a card — the button was bleeding through on top of cards.
+  const occupiedCells = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of placements) {
+      for (let r = p.rowStart; r < p.rowStart + p.rowSpan; r++) {
+        const day = days[r];
+        if (day) set.add(`${crews[p.crewIdx]}::${fmtISO(day)}`);
+      }
+    }
+    return set;
+  }, [placements, days, crews]);
 
   // Track open drawer by jobId so it stays in sync with optimistic / server
   // updates — opening as a snapshot value would freeze the drawer's view of
@@ -1812,6 +1903,7 @@ export function ProductionTimeline({
                   onStartBlockDrag={startBlockDrag}
                   onExtendBlockDrag={extendBlockDrag}
                   onAddJobToCell={(crew, dayISO) => setPrefillAddJob({ crew, dayISO })}
+                  occupiedCells={occupiedCells}
                   wdOpts={wdOpts}
                   weather={weather[key]}
                 />
@@ -2043,6 +2135,7 @@ function DayRow({
   onStartBlockDrag,
   onExtendBlockDrag,
   onAddJobToCell,
+  occupiedCells,
   wdOpts,
   weather,
 }: {
@@ -2061,6 +2154,7 @@ function DayRow({
   onStartBlockDrag: (crew: string, dayISO: string) => void;
   onExtendBlockDrag: (crew: string, dayISO: string) => void;
   onAddJobToCell: (crew: string, dayISO: string) => void;
+  occupiedCells: Set<string>;
   wdOpts: { includeSunday: boolean; includeSaturday: boolean };
   weather?: DayWeather;
 }) {
@@ -2152,6 +2246,7 @@ function DayRow({
             onExtendBlockDrag={onExtendBlockDrag}
             isBlockDragging={blockDrag != null}
             onAddJob={onAddJobToCell}
+            hasJob={occupiedCells.has(`${c}::${dayISO}`)}
             isLastColumn={ci === crews.length - 1}
           />
         );
@@ -2320,6 +2415,7 @@ function DropCell({
   onExtendBlockDrag,
   isBlockDragging,
   onAddJob,
+  hasJob,
   isLastColumn,
 }: {
   crewKey: string;
@@ -2334,6 +2430,7 @@ function DropCell({
   onExtendBlockDrag: (crewKey: string, dayISO: string) => void;
   isBlockDragging: boolean;
   onAddJob: (crewKey: string, dayISO: string) => void;
+  hasJob?: boolean;
   isLastColumn: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `${crewKey}::${dayISO}` });
@@ -2425,9 +2522,11 @@ function DropCell({
       {/* "+" affordance — click empty cell to add a job pre-filled with
           THIS crew + day. Hover-revealed in top-left so it doesn't
           collide with the OFF button (top-right). Hidden when cell is
-          OFF (can't add a job to a blocked day) or in Unassigned column
-          (use the top toolbar's Add Job for unassigned). */}
-      {!isOff && (
+          OFF (can't add a job to a blocked day), in Unassigned column,
+          OR when a job already occupies this cell (hasJob=true) —
+          prevents the button from appearing on top of existing cards
+          and blocking the crew-status icon. */}
+      {!isOff && !hasJob && (
         <button
           type="button"
           onClick={(e) => {

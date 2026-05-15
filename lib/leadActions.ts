@@ -11,6 +11,7 @@ import {
   clearRange,
   findFirstEmptyArchiveRow,
   findRowByLeadId,
+  nextProductionJobId,
   readCell,
   readRow,
   writeCell,
@@ -103,17 +104,56 @@ async function sheets_readCellPair(range: string): Promise<[string, string]> {
   return [result[0] || "", result[1] || ""];
 }
 
-/** Push the next follow-up by N days from today, or set explicit date. */
+/**
+ * Push the next follow-up by N days from today, or set explicit date.
+ *
+ * `manual` flag (default false):
+ *   - `true`  — Jared explicitly set this date (from Focus Mode picker,
+ *               drawer date input, briefing override, MCP call). Sets the
+ *               Manual FU Lock (col AF) = TRUE so future auto-snooze on
+ *               touch doesn't overwrite it. Lock stays sticky until the
+ *               locked date arrives.
+ *   - `false` — auto-snooze path (called after a touch from phase cadence).
+ *               If a manual lock is currently active AND the locked date
+ *               is still in the future, this is a NO-OP — the lock wins.
+ *               If the lock has expired (locked date <= today), the lock
+ *               is cleared and the new auto-snooze date is written.
+ */
 export async function snoozeFollowUp(
   leadId: string,
   daysOrDate: number | string,
-  fuType?: "Call" | "Email" | "Text"
-): Promise<{ ok: true; nextDate: string }> {
+  fuType?: "Call" | "Email" | "Text",
+  manual: boolean = false
+): Promise<{ ok: true; nextDate: string; skipped?: boolean }> {
   const row = await findRowByLeadId(leadId);
   if (!row) throw new Error(`Lead ID ${leadId} not found`);
 
   const today = todayISO();
   const nextDate = typeof daysOrDate === "number" ? addDays(today, daysOrDate) : daysOrDate;
+
+  // Manual lock gating — auto-snooze NEVER overrides a manual lock with a
+  // future locked date. Only manual=true can change the FU when locked.
+  if (!manual) {
+    try {
+      const lockState = await sheets_readCellPair(`Opportunities!M${row}:M${row}`);
+      const currentFu = lockState[0] || "";
+      const lockRaw = await readCell(`Opportunities!AF${row}`);
+      const isLocked = (lockRaw || "").trim().toUpperCase() === "TRUE";
+      if (isLocked) {
+        if (currentFu && currentFu > today) {
+          // Lock active, locked date still future → skip auto-snooze entirely
+          await logActivity(leadId, "snooze", `skipped (manual lock holds FU=${currentFu})`);
+          return { ok: true, nextDate: currentFu, skipped: true };
+        }
+        // Lock expired (locked date passed) — clear lock + proceed with auto-snooze
+        await writeCell(`Opportunities!AF${row}`, "");
+        await logActivity(leadId, "snooze", `manual lock expired, resuming auto cadence`);
+      }
+    } catch {
+      // best-effort; if we can't read the lock, fall through to normal write
+    }
+  }
+
   // M = Next FU Date, N = Next FU Type (only update if provided)
   if (fuType) {
     await writeRow(`Opportunities!M${row}:N${row}`, [nextDate, fuType]);
@@ -122,8 +162,22 @@ export async function snoozeFollowUp(
   }
   await writeCell(`Opportunities!W${row}`, today);
 
-  await logActivity(leadId, "snooze", `next ${nextDate}${fuType ? ` · ${fuType}` : ""}`);
+  // Set or clear the lock flag in col AF
+  if (manual) {
+    await writeCell(`Opportunities!AF${row}`, "TRUE");
+  }
+
+  await logActivity(leadId, "snooze", `${manual ? "manual" : "auto"} → ${nextDate}${fuType ? ` · ${fuType}` : ""}`);
   return { ok: true, nextDate };
+}
+
+/** Explicitly clear the manual FU lock (returns lead to auto-cadence). */
+export async function clearManualFuLock(leadId: string): Promise<{ ok: true }> {
+  const row = await findRowByLeadId(leadId);
+  if (!row) throw new Error(`Lead ID ${leadId} not found`);
+  await writeCell(`Opportunities!AF${row}`, "");
+  await logActivity(leadId, "snooze", `manual lock cleared`);
+  return { ok: true };
 }
 
 /**
@@ -175,6 +229,29 @@ export async function appendNote(leadId: string, text: string): Promise<{ ok: tr
 }
 
 /** Change stage (Verbal Yes / On Hold / Long-Term). For Won/Lost, use archiveLead instead. */
+/** Returns YYYY-02-15 of the next upcoming February 15.
+ *  If today is before Feb 15 of this year → this year's Feb 15.
+ *  Otherwise → next year's Feb 15. Used as the Long-Term re-engagement date.
+ */
+function nextFebruary15(): string {
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = fmt.formatToParts(now);
+  const year = parseInt(parts.find((p) => p.type === "year")!.value);
+  const month = parseInt(parts.find((p) => p.type === "month")!.value);
+  const day = parseInt(parts.find((p) => p.type === "day")!.value);
+  // If Feb 15 this year hasn't arrived yet, use it; otherwise next year.
+  if (month < 2 || (month === 2 && day < 15)) {
+    return `${year}-02-15`;
+  }
+  return `${year + 1}-02-15`;
+}
+
 export async function changeStage(
   leadId: string,
   newStage: "Proposal Sent" | "Verbal Yes" | "On Hold" | "Long-Term"
@@ -184,6 +261,17 @@ export async function changeStage(
 
   await writeCell(`Opportunities!G${row}`, newStage);
   await writeCell(`Opportunities!W${row}`, todayISO());
+
+  // Auto-set re-engagement FU when moving to Long-Term. Feb 15 next year =
+  // start of painting season — right moment to check back in. Sets manual
+  // lock so auto-snooze on future touches doesn't overwrite it.
+  if (newStage === "Long-Term") {
+    const feb15 = nextFebruary15();
+    await writeCell(`Opportunities!M${row}`, feb15);
+    await writeCell(`Opportunities!N${row}`, "Call");
+    await writeCell(`Opportunities!AF${row}`, "TRUE");
+    await logActivity(leadId, "snooze", `auto → ${feb15} Call (Long-Term re-engagement)`);
+  }
 
   await logActivity(leadId, "stage", `→ ${newStage}`);
   return { ok: true };
@@ -224,7 +312,19 @@ export async function updateEstValue(
   return { ok: true };
 }
 
-/** Archive lead as Won or Lost. Copies key fields to Archive, clears Opportunities row. */
+/**
+ * Resolve a Won or Lost lead from the Opportunities tab.
+ *
+ * Routing (per Jared 2026-05-15):
+ *   - Lost → Archive tab. Archive is for rejected proposals only.
+ *   - Won  → "In Production" tab. Active clients live there until the job
+ *            is marked Complete (at which point they move to "Completed Jobs").
+ *            Won deals do NOT get an Archive row.
+ *
+ * Returns the row number written. For Won, that's the In Production row;
+ * for Lost, that's the Archive row. Kept as `archiveRow` for backwards-compat
+ * with existing callers.
+ */
 export async function archiveLead(
   leadId: string,
   result: "Won" | "Lost",
@@ -273,81 +373,88 @@ export async function archiveLead(
     bookedValueFormatted ? ` Booked at ${bookedValueFormatted}.` : ""
   }\n\n${existingNotes}`;
 
-  const archiveRow: string[] = [
-    id,                   // A
-    name,                 // B
-    phone,                // C
-    email,                // D
-    address,              // E
-    leadSource,           // F
-    result,               // G Final Stage
-    estValue,             // H
-    estDate,              // I
-    proposalDate,         // J
-    lastTouchDate,        // K
-    lastTouchType,        // L
-    result,               // M Result
-    today,                // N Result Date
-    daysToClose,          // O Days from Estimate
-    result === "Won" ? "YES" : "NO", // P Booked?
-    bookedValueFormatted, // Q Booked Value
-    extra.reasonLost || "",          // R Reason Lost
-    nurtureStep,          // S Nurture Step
-    callAttempts,         // T Total Touches
-    archiveNote,          // U Notes
-    dripJobsLink,         // V DripJobs Link
-    today,                // W Archive Date
-    today,                // X Last Updated
-  ];
+  let resultRow: number;
 
-  const archRow = await findFirstEmptyArchiveRow();
-  await writeRow(`Archive!A${archRow}:X${archRow}`, archiveRow);
-
-  // For Won jobs, also create a Production row (the job goes into production scheduling)
   if (result === "Won") {
+    // WON → write to "In Production" tab only. No Archive row.
+    const jobId = await nextProductionJobId(); // P-format (P31, P32, …)
+
+    // Derive numeric pre-tax value for Est Hours estimate.
+    // If extra.bookedValue was passed it's already pre-tax (Jared enters that
+    // way per the pre-tax rule). If we fall back to the Opportunities Est
+    // Value (col H), that's also pre-tax. So no /1.05 division needed here.
+    const numericValue =
+      extra.bookedValue !== undefined
+        ? extra.bookedValue
+        : parseFloat(String(estValue).replace(/[$,\s]/g, "")) || 0;
+
+    // Est Hours = pre-tax dollars / $100/hr (CC's rough rate, per Jared
+    // 2026-05-15). Whole number — these are rough estimates for scheduling,
+    // not billing. Crew lead can override on the day.
+    const estHoursAuto = numericValue > 0 ? String(Math.round(numericValue / 100)) : "";
+
     const productionRow: string[] = [
-      String(id),                              // A Job ID (matches Archive ID)
+      jobId,                                   // A Job ID (P-format)
       String(name),                            // B Client Name
       String(phone),                           // C Phone
       String(email),                           // D Email
       String(address),                         // E Address
-      bookedValueFormatted || String(estValue),// F Booked Value
+      bookedValueFormatted || String(estValue),// F Booked Value (pre-tax)
       "",                                      // G Crew (assign later)
       "",                                      // H Start Date (schedule later)
       "",                                      // I End Date
-      "",                                      // J Est Hours
+      estHoursAuto,                            // J Est Hours (auto = value/100)
       "Scheduled",                             // K Status
       "Flexible",                              // L Movability (default)
       "",                                      // M Window Start
       "",                                      // N Window End
-      "NO",                                    // O Power Wash Done
-      "",                                      // P Power Wash Date
-      "NO",                                    // Q Colors Picked
-      "",                                      // R Colors Picked Date
+      "",                                      // O Wash Status
+      "",                                      // P Wash Date
+      "",                                      // Q Colors Status
+      "",                                      // R Colors Date
       "",                                      // S Materials Ordered Date
-      `Auto-created from Archive ID ${id} on ${today}. ${extra.note || ""}`.trim(), // T Notes
-      "",                                      // U Last Client Touch
+      `Booked ${today} from Opportunities ID ${id}. ${extra.note || ""}`.trim() +
+        (existingNotes ? `\n\n--- Sales notes ---\n${existingNotes}` : ""), // T Production Notes
+      today,                                   // U Last Client Touch (booking day)
       "",                                      // V Next Client Touch
-      "",                                      // W Lawn Sign Up
-      "",                                      // X Lawn Sign Down
-      "",                                      // Y Invoice Sent
-      "",                                      // Z Review Requested
-      "",                                      // AA Review Received
-      "",                                      // AB Review Stars/URL
+      "",                                      // W Lawn Sign Up Date
+      "",                                      // X Lawn Sign Down Date
+      "",                                      // Y Invoice Sent Date
+      "",                                      // Z Review Requested Date
+      "",                                      // AA
+      "",                                      // AB
+      "",                                      // AC Scope
+      "",                                      // AD Crew Status
+      "",                                      // AE Punch List
+      "yes",                                   // AF Auto-Confirm
+      "",                                      // AG Confirmation Sent
     ];
-    try {
-      await appendProductionRow(productionRow);
-    } catch (err) {
-      // Don't fail the whole archive if Production write fails — just log
-      console.error("Production row creation failed:", err);
-    }
+    const { row } = await appendProductionRow(productionRow);
+    resultRow = row;
+  } else {
+    // LOST → write to Archive tab only.
+    // Archive schema: 24 cols A-X
+    // A id, B name, C phone, D email, E address, F lead source, G final stage,
+    // H est value, I est date, J proposal date, K last touch, L last touch type,
+    // M result, N result date, O days from estimate to close, P booked?,
+    // Q booked value, R reason lost, S nurture step, T total touches,
+    // U notes, V dripjobs link, W archive date, X last updated
+    const archiveRow: string[] = [
+      id, name, phone, email, address, leadSource, result, estValue, estDate,
+      proposalDate, lastTouchDate, lastTouchType, result, today, daysToClose,
+      "NO", "", extra.reasonLost || "", nurtureStep, callAttempts, archiveNote,
+      dripJobsLink, today, today,
+    ];
+    const archRow = await findFirstEmptyArchiveRow();
+    await writeRow(`Archive!A${archRow}:X${archRow}`, archiveRow);
+    resultRow = archRow;
   }
 
   await clearRange(`Opportunities!A${oppRow}:AD${oppRow}`);
 
   const detail = `${result}${result === "Won" && extra.bookedValue ? ` · $${extra.bookedValue.toFixed(2)}` : ""}${result === "Lost" && extra.reasonLost ? ` · ${extra.reasonLost}` : ""}`;
   await logActivity(leadId, "archive", detail);
-  return { ok: true, archiveRow: archRow };
+  return { ok: true, archiveRow: resultRow };
 }
 
 /**

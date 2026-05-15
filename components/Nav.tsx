@@ -10,7 +10,7 @@ export function Nav() {
   const tabs = [
     { href: "/leads", label: "Leads", icon: <Inbox className="w-3.5 h-3.5" /> },
     { href: "/", label: "Pipeline", icon: <TrendingUp className="w-3.5 h-3.5" /> },
-    { href: "/production", label: "Production", icon: <Hammer className="w-3.5 h-3.5" /> },
+    { href: "/production", label: "In Production", icon: <Hammer className="w-3.5 h-3.5" /> },
     { href: "/production/map", label: "Map", icon: <MapPin className="w-3.5 h-3.5" /> },
   ];
   return (

@@ -16,10 +16,10 @@ import type {
 import { LEAD_STAGES } from "./types";
 import { parseCurrency, parseDate, parseDecimal, parseInteger } from "./utils";
 
-export const SHEET_ID = process.env.GOOGLE_SHEET_ID || "YOUR_SHEET_ID_HERE";
-const RANGE = "Opportunities!A2:AE1000";
+export const SHEET_ID = process.env.GOOGLE_SHEET_ID || "1_ixxLJVKlu3JjgTyjgwSjq_bsZyv1Htp2iIbnBkXZmg";
+const RANGE = "Opportunities!A2:AF1000";
 const ARCHIVE_RANGE = "Archive!A2:X1000";
-const PRODUCTION_RANGE = "Production!A2:AG1000";
+const PRODUCTION_RANGE = "In Production!A2:AG1000";
 const LEADS_RANGE = "Leads!A2:Y1000";
 
 const VALID_STAGES: Stage[] = [
@@ -55,7 +55,7 @@ export function getServiceAccountAuth() {
  */
 export async function findRowByLeadId(
   leadId: string,
-  sheetName: "Opportunities" | "Archive" = "Opportunities"
+  sheetName: "Opportunities" | "Archive" | "In Production" | "Completed Jobs" | "Leads" = "Opportunities"
 ): Promise<number | null> {
   const auth = getServiceAccountAuth();
   const sheets = google.sheets({ version: "v4", auth });
@@ -333,7 +333,7 @@ export async function fetchProduction(): Promise<ProductionJob[]> {
 
 /** Find the row of a Production job by jobId. */
 export async function findProductionRowByJobId(jobId: string): Promise<number | null> {
-  return findRowByLeadId(jobId, "Production" as never as "Opportunities");
+  return findRowByLeadId(jobId, "In Production");
 }
 
 /** Append a new Production row (used by Mark Won flow). */
@@ -405,7 +405,7 @@ export async function bulkRenameCrew(
   const sheets = google.sheets({ version: "v4", auth });
   const { data } = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: "Production!G2:G1000",
+    range: "In Production!G2:G1000",
   });
   const rows = data.values || [];
   const oldKey = oldName.trim().toLowerCase();
@@ -414,7 +414,7 @@ export async function bulkRenameCrew(
     const v = (r[0] || "").trim();
     if (v.toLowerCase() === oldKey) {
       // i = 0 → row 2 in sheet (data starts at row 2)
-      targets.push(`Production!G${i + 2}`);
+      targets.push(`In Production!G${i + 2}`);
     }
   });
   if (targets.length === 0) return { updated: 0 };
@@ -428,14 +428,40 @@ export async function bulkRenameCrew(
   return { updated: targets.length };
 }
 
+/**
+ * Returns the next available Production job ID in P-format (e.g., "P31").
+ * Scans column A of the Production tab, finds the max existing P-number,
+ * and returns max + 1. Numeric-only IDs (leftover from old archiveLead bug)
+ * are ignored — only P-prefixed IDs count.
+ */
+export async function nextProductionJobId(): Promise<string> {
+  const auth = getServiceAccountAuth();
+  const sheets = google.sheets({ version: "v4", auth });
+  const { data } = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: "In Production!A1:A1000",
+  });
+  const rows = data.values || [];
+  let maxN = 0;
+  for (const row of rows) {
+    const cell = String(row?.[0] ?? "").trim();
+    const match = cell.match(/^P(\d+)$/i);
+    if (match) {
+      const n = parseInt(match[1], 10);
+      if (n > maxN) maxN = n;
+    }
+  }
+  return `P${String(maxN + 1).padStart(2, "0")}`;
+}
+
 export async function appendProductionRow(values: string[]): Promise<{ row: number }> {
   const auth = getServiceAccountAuth();
   const sheets = google.sheets({ version: "v4", auth });
 
-  // Find first empty row in Production tab
+  // Find first empty row in In Production tab
   const { data } = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: "Production!A1:A1000",
+    range: "In Production!A1:A1000",
   });
   const rows = data.values || [];
   let lastFilled = 1; // header
@@ -443,17 +469,49 @@ export async function appendProductionRow(values: string[]): Promise<{ row: numb
     if (String(rows[i]?.[0] ?? "").trim()) lastFilled = i + 1;
   }
   const nextRow = lastFilled + 1;
-  // Range must match the full schema width (A:AG, 33 cols) — createProductionJob
-  // writes 33 values including Scope (AC), Crew Status (AD), Punch List (AE),
-  // Auto-Confirm (AF), Confirmation Sent (AG). Previously the range stopped
-  // at AB and the API rejected the row (2026-05-12 bug).
+  // Range must match the full schema width (A:AG, 33 cols)
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
-    range: `Production!A${nextRow}:AG${nextRow}`,
+    range: `In Production!A${nextRow}:AG${nextRow}`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [values.map(String)] },
   });
   return { row: nextRow };
+}
+
+/**
+ * Append a row to the "Completed Jobs" tab. Same schema as In Production
+ * (A:AG, 33 cols). Used when a job is marked Complete and moved out of
+ * the active production tab.
+ */
+export async function appendCompletedJobRow(values: string[]): Promise<{ row: number }> {
+  const auth = getServiceAccountAuth();
+  const sheets = google.sheets({ version: "v4", auth });
+  const { data } = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: "Completed Jobs!A1:A1000",
+  });
+  const rows = data.values || [];
+  let lastFilled = 1;
+  for (let i = 0; i < rows.length; i++) {
+    if (String(rows[i]?.[0] ?? "").trim()) lastFilled = i + 1;
+  }
+  const nextRow = lastFilled + 1;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `Completed Jobs!A${nextRow}:AG${nextRow}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [values.map(String)] },
+  });
+  return { row: nextRow };
+}
+
+/**
+ * Read a full Production job row (A:AG) by sheet row number.
+ * Used by the "mark complete" flow to copy the row before clearing it.
+ */
+export async function readProductionRow(row: number): Promise<string[]> {
+  return readRow(`In Production!A${row}:AG${row}`);
 }
 
 function normStage(s: string): Stage {
@@ -514,6 +572,7 @@ function rowToOpportunity(row: string[]): Opportunity | null {
     spouseAtEstimate,
     notesSummary,
     todoListRaw,
+    manualFuLockRaw,
   ] = row;
 
   const trimmedName = (name || "").trim();
@@ -562,6 +621,7 @@ function rowToOpportunity(row: string[]): Opportunity | null {
     spouseAtEstimate: (spouseAtEstimate || "").trim(),
     notesSummary: (notesSummary || "").trim(),
     todoList: parseOppTodoList(todoListRaw || ""),
+    manualFuLock: (manualFuLockRaw || "").trim().toUpperCase() === "TRUE",
   };
 }
 

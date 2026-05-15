@@ -3,6 +3,8 @@ import {
   writeCell,
   writeRow,
   appendProductionRow,
+  appendCompletedJobRow,
+  readProductionRow,
   bulkRenameCrew,
   clearRange,
 } from "./sheets";
@@ -25,7 +27,7 @@ function todayISO(): string {
 }
 
 async function findProdRow(jobId: string): Promise<number> {
-  const row = await findRowByLeadId(jobId, "Production" as never);
+  const row = await findRowByLeadId(jobId, "In Production");
   if (!row) throw new Error(`Production job ${jobId} not found`);
   return row;
 }
@@ -36,11 +38,11 @@ export async function updateSchedule(
   patch: { crew?: string; startDate?: string; endDate?: string; estHours?: number | null }
 ): Promise<{ ok: true }> {
   const row = await findProdRow(jobId);
-  if (patch.crew !== undefined) await writeCell(`Production!G${row}`, patch.crew);
-  if (patch.startDate !== undefined) await writeCell(`Production!H${row}`, patch.startDate);
-  if (patch.endDate !== undefined) await writeCell(`Production!I${row}`, patch.endDate);
+  if (patch.crew !== undefined) await writeCell(`In Production!G${row}`, patch.crew);
+  if (patch.startDate !== undefined) await writeCell(`In Production!H${row}`, patch.startDate);
+  if (patch.endDate !== undefined) await writeCell(`In Production!I${row}`, patch.endDate);
   if (patch.estHours !== undefined && patch.estHours !== null) {
-    await writeCell(`Production!J${row}`, String(patch.estHours));
+    await writeCell(`In Production!J${row}`, String(patch.estHours));
   }
   const parts: string[] = [];
   if (patch.crew !== undefined) parts.push(`crew=${patch.crew}`);
@@ -57,7 +59,33 @@ export async function updateStatus(
   status: "Scheduled" | "Power Washed" | "Colors Picked" | "In Production" | "Complete"
 ): Promise<{ ok: true }> {
   const row = await findProdRow(jobId);
-  await writeCell(`Production!K${row}`, status);
+
+  // When a job is marked Complete, MOVE the row from "In Production" to
+  // "Completed Jobs". This keeps the active production tab focused on
+  // current work and gives completed jobs their own home (review tracking,
+  // historical lookup, etc.). Per Jared 2026-05-15 — Won deals shouldn't
+  // pile up in the same tab as active jobs.
+  if (status === "Complete") {
+    try {
+      const fullRow = await readProductionRow(row);
+      // Update col K in the read row to "Complete" before writing
+      const completedRow = [...fullRow];
+      while (completedRow.length < 33) completedRow.push("");
+      completedRow[10] = "Complete"; // K = index 10
+      await appendCompletedJobRow(completedRow);
+      await clearRange(`In Production!A${row}:AG${row}`);
+      await logActivity(jobId, "status", `→ Complete (moved to Completed Jobs)`);
+      return { ok: true };
+    } catch (err) {
+      console.error("Move-to-Completed-Jobs failed, falling back to in-place status update:", err);
+      // Fallback: just update status in place rather than lose the change
+      await writeCell(`In Production!K${row}`, status);
+      await logActivity(jobId, "status", `→ Complete (in-place; move failed)`);
+      return { ok: true };
+    }
+  }
+
+  await writeCell(`In Production!K${row}`, status);
   await logActivity(jobId, "status", `→ ${status}`);
   return { ok: true };
 }
@@ -70,9 +98,9 @@ export async function updateMovability(
   windowEnd?: string
 ): Promise<{ ok: true }> {
   const row = await findProdRow(jobId);
-  await writeCell(`Production!L${row}`, movability);
-  if (windowStart !== undefined) await writeCell(`Production!M${row}`, windowStart);
-  if (windowEnd !== undefined) await writeCell(`Production!N${row}`, windowEnd);
+  await writeCell(`In Production!L${row}`, movability);
+  if (windowStart !== undefined) await writeCell(`In Production!M${row}`, windowStart);
+  if (windowEnd !== undefined) await writeCell(`In Production!N${row}`, windowEnd);
   const win = windowStart || windowEnd ? ` (${windowStart || "?"} → ${windowEnd || "?"})` : "";
   await logActivity(jobId, "movability", `→ ${movability}${win}`);
   return { ok: true };
@@ -84,10 +112,10 @@ export async function updateWashStatus(
   status: "" | "NA" | "Not Scheduled" | "Yes Scheduled" | "Complete"
 ): Promise<{ ok: true }> {
   const row = await findProdRow(jobId);
-  await writeCell(`Production!O${row}`, status);
+  await writeCell(`In Production!O${row}`, status);
   // Auto-set wash date when marked Complete
   if (status === "Complete") {
-    await writeCell(`Production!P${row}`, todayISO());
+    await writeCell(`In Production!P${row}`, todayISO());
   }
   await logActivity(jobId, "wash", `→ ${status || "(cleared)"}`);
   return { ok: true };
@@ -104,10 +132,10 @@ export async function updateColorsStatus(
     | "Confirmed Colours"
 ): Promise<{ ok: true }> {
   const row = await findProdRow(jobId);
-  await writeCell(`Production!Q${row}`, status);
+  await writeCell(`In Production!Q${row}`, status);
   // Auto-set colors date when confirmed
   if (status === "Confirmed Colours") {
-    await writeCell(`Production!R${row}`, todayISO());
+    await writeCell(`In Production!R${row}`, todayISO());
   }
   await logActivity(jobId, "colors", `→ ${status || "(cleared)"}`);
   return { ok: true };
@@ -119,7 +147,7 @@ export async function updateMaterialsOrdered(
   date: string
 ): Promise<{ ok: true }> {
   const row = await findProdRow(jobId);
-  await writeCell(`Production!S${row}`, date);
+  await writeCell(`In Production!S${row}`, date);
   await logActivity(jobId, "materials", `ordered ${date}`);
   return { ok: true };
 }
@@ -128,11 +156,11 @@ export async function updateMaterialsOrdered(
 export async function appendProductionNote(jobId: string, text: string): Promise<{ ok: true }> {
   const row = await findProdRow(jobId);
   // Read existing notes
-  const existing = await import("./sheets").then((m) => m.readCell(`Production!T${row}`));
+  const existing = await import("./sheets").then((m) => m.readCell(`In Production!T${row}`));
   const today = todayISO();
   const newNote = `[${today}]: ${text.trim()}`;
   const combined = existing ? `${newNote}\n\n${existing}` : newNote;
-  await writeCell(`Production!T${row}`, combined);
+  await writeCell(`In Production!T${row}`, combined);
   const preview = text.trim().slice(0, 80) + (text.trim().length > 80 ? "…" : "");
   await logActivity(jobId, "note", preview);
   return { ok: true };
@@ -148,7 +176,7 @@ export async function logClientTouch(
   const next = new Date(today + "T12:00:00Z");
   next.setUTCDate(next.getUTCDate() + nextDays);
   const nextDate = next.toISOString().slice(0, 10);
-  await writeRow(`Production!U${row}:V${row}`, [today, nextDate]);
+  await writeRow(`In Production!U${row}:V${row}`, [today, nextDate]);
   await logActivity(jobId, "touch", `logged; next ${nextDate}`);
   return { ok: true, nextDate };
 }
@@ -162,7 +190,7 @@ export async function updateClientTouches(
   nextDate: string | null
 ): Promise<{ ok: true }> {
   const row = await findProdRow(jobId);
-  await writeRow(`Production!U${row}:V${row}`, [lastDate || "", nextDate || ""]);
+  await writeRow(`In Production!U${row}:V${row}`, [lastDate || "", nextDate || ""]);
   const parts: string[] = [];
   if (lastDate) parts.push(`last=${lastDate}`);
   if (nextDate) parts.push(`next=${nextDate}`);
@@ -184,7 +212,7 @@ export async function updateBookedValue(
     value === 0
       ? ""
       : `$${value.toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  await writeCell(`Production!F${row}`, formatted);
+  await writeCell(`In Production!F${row}`, formatted);
   await logActivity(jobId, "value", `→ ${formatted || "$0"}`);
   return { ok: true };
 }
@@ -192,7 +220,7 @@ export async function updateBookedValue(
 /** Update Scope / Crew Brief — project-defining info, NOT timestamped (replaces existing). */
 export async function updateScope(jobId: string, scope: string): Promise<{ ok: true }> {
   const row = await findProdRow(jobId);
-  await writeCell(`Production!AC${row}`, scope);
+  await writeCell(`In Production!AC${row}`, scope);
   const preview = scope.trim().slice(0, 80) + (scope.trim().length > 80 ? "…" : "");
   await logActivity(jobId, "scope", scope.trim() ? `updated: ${preview}` : "cleared");
   return { ok: true };
@@ -212,7 +240,7 @@ export async function updatePunchList(
       done: Boolean(it.done),
     }));
   const serialized = sanitized.length ? JSON.stringify(sanitized) : "";
-  await writeCell(`Production!AE${row}`, serialized);
+  await writeCell(`In Production!AE${row}`, serialized);
   const doneCount = sanitized.filter((it) => it.done).length;
   await logActivity(jobId, "punch", `${doneCount}/${sanitized.length} done`);
   return { ok: true };
@@ -223,7 +251,7 @@ export async function updatePunchList(
  *  Default is true (opt-out, not opt-in). */
 export async function updateAutoConfirm(jobId: string, value: boolean): Promise<{ ok: true }> {
   const row = await findProdRow(jobId);
-  await writeCell(`Production!AF${row}`, value ? "yes" : "no");
+  await writeCell(`In Production!AF${row}`, value ? "yes" : "no");
   await logActivity(jobId, "autoConfirm", value ? "enabled" : "disabled");
   return { ok: true };
 }
@@ -233,7 +261,7 @@ export async function updateAutoConfirm(jobId: string, value: boolean): Promise<
 export async function markConfirmationSent(jobId: string): Promise<{ ok: true; date: string }> {
   const row = await findProdRow(jobId);
   const today = todayISO();
-  await writeCell(`Production!AG${row}`, today);
+  await writeCell(`In Production!AG${row}`, today);
   await logActivity(jobId, "confirm", `confirmation email sent ${today}`);
   return { ok: true, date: today };
 }
@@ -244,7 +272,7 @@ export async function updateCrewStatus(
   crewStatus: "Not Offered" | "Offered" | "Confirmed"
 ): Promise<{ ok: true }> {
   const row = await findProdRow(jobId);
-  await writeCell(`Production!AD${row}`, crewStatus);
+  await writeCell(`In Production!AD${row}`, crewStatus);
   await logActivity(jobId, "crewStatus", `→ ${crewStatus}`);
   return { ok: true };
 }
@@ -257,13 +285,13 @@ export async function updateReview(
   const row = await findProdRow(jobId);
   const today = todayISO();
   if (patch.requested !== undefined) {
-    await writeCell(`Production!Z${row}`, patch.requested ? today : "");
+    await writeCell(`In Production!Z${row}`, patch.requested ? today : "");
   }
   if (patch.received !== undefined) {
-    await writeCell(`Production!AA${row}`, patch.received ? today : "");
+    await writeCell(`In Production!AA${row}`, patch.received ? today : "");
   }
   if (patch.starsOrUrl !== undefined) {
-    await writeCell(`Production!AB${row}`, patch.starsOrUrl);
+    await writeCell(`In Production!AB${row}`, patch.starsOrUrl);
   }
   const parts: string[] = [];
   if (patch.requested !== undefined) parts.push(patch.requested ? "requested" : "un-requested");
@@ -320,7 +348,7 @@ export async function createProductionJob(input: {
     input.estHours ? String(input.estHours) : "",
     "Scheduled",
     input.movability || "Flexible",
-    "", "", "NO", "", "NO", "", "",
+    "", "", "", "", "", "", "",
     `Manually created on ${today}.`,
     // U Last Client Touch — defaults to today since CC always touches
     // the client at booking. Jared can update later via the drawer.
@@ -347,6 +375,6 @@ export async function deleteProductionJob(jobId: string): Promise<{ ok: true }> 
   const row = await findProdRow(jobId);
   // Log BEFORE clear so the activity log retains the audit trail
   await logActivity(jobId, "delete", `Job deleted from Production tab`);
-  await clearRange(`Production!A${row}:AG${row}`);
+  await clearRange(`In Production!A${row}:AG${row}`);
   return { ok: true };
 }

@@ -80,17 +80,17 @@ const COLORS_COLOR: Record<ColorsStatus, string> = {
 };
 
 const WASH_LABEL: Record<WashStatus, string> = {
-  "": "Wash —",
-  NA: "Wash NA",
-  "Not Scheduled": "Wash Not Sched",
-  "Yes Scheduled": "Wash Sched",
+  "": "Wash",
+  NA: "NA",
+  "Not Scheduled": "Not Sched",
+  "Yes Scheduled": "Sched",
   Complete: "Wash ✓",
 };
 
 const COLORS_LABEL: Record<ColorsStatus, string> = {
-  "": "Colors —",
-  "Match Required": "Match Req",
-  "Sample Required": "Sample Req",
+  "": "Colors",
+  "Match Required": "Match",
+  "Sample Required": "Sample",
   "Codes from Client": "Codes",
   "Confirmed Colours": "Colors ✓",
 };
@@ -390,7 +390,7 @@ function StatusSelect<T extends string>({
         onChange={(e) => onChange(e.target.value as T)}
         disabled={busy}
         className={cn(
-          "appearance-none cursor-pointer pl-1.5 pr-5 py-0.5 text-[10px] font-semibold rounded border transition disabled:opacity-60",
+          "shrink-0 appearance-none cursor-pointer pl-1.5 pr-5 py-0.5 text-[10px] font-semibold rounded border transition disabled:opacity-60",
           colorMap[value]
         )}
         style={{
